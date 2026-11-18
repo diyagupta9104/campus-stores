@@ -251,6 +251,29 @@ body > main {
 #campus-stores label span {
   display: block;
 }
+#campus-stores .slip .row > div:last-child {
+  display: flex;
+  flex-wrap: wrap;
+  justify-content: flex-end;
+  gap: 6px;
+}
+#campus-stores .slip form,
+#campus-stores .return-plan {
+  margin: 0 0 12px;
+  padding: 11px 13px;
+  background: var(--desk);
+  border-left: 3px solid var(--sel);
+}
+#campus-stores .slip form .form {
+  margin-top: 8px;
+}
+#campus-stores .verify-copy {
+  max-width: 68ch;
+}
+#campus-stores .return-plan {
+  background: var(--memo);
+  color: var(--memotxt);
+}
 #campus-stores .tag {
   background: var(--desk);
   color: var(--quiet);
@@ -361,6 +384,12 @@ body > main {
   }
   #campus-stores .row {
     gap: 5px;
+  }
+  #campus-stores .slip .row {
+    grid-template-columns: minmax(0, 1fr);
+  }
+  #campus-stores .slip .row > div:last-child {
+    justify-content: flex-start;
   }
 }
 @media (pointer: coarse) {

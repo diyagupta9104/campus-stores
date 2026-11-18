@@ -107,6 +107,8 @@
     ],
     notes: [],
     editing: false,
+    planning: null,
+    returning: null,
     onlyOpen: true,
     notice: "Sample shift · All records are fictional.",
   });
@@ -284,14 +286,43 @@
       .slice()
       .reverse();
     if (!shown.length) html += "<p>No outstanding slips.</p>";
-    for (const l of shown)
-      html += row(
-        "L-" + l.num + " · " + l.asset,
-        l.req + " · " + l.who + " · Due " + l.due,
+    for (const l of shown) {
+      const unit = getAsset(l.asset);
+      const plan = l.expectedBy && !l.back
+        ? '<div class="return-plan"><strong>Handover:</strong> ' +
+          esc(l.asset) + " expected from " + esc(l.expectedBy) +
+          " at " + esc(l.expectedAt) + "</div>"
+        : "";
+      html += '<div class="slip">' + row(
+        "L-" + l.num + " · " + l.asset + " · " + unit.type,
+        l.req + " · " + getReq(l.req).club + " · Issued to " + l.who +
+          " · Due " + l.due + (l.returnedAt ? " · Back " + l.returnedAt : ""),
         l.back
-          ? badge("Returned")
-          : btn("Record return", "return", String(l.num)),
-      );
+          ? badge("Returned by " + (l.returnedBy || "desk"))
+          : btn("Record return", "return", String(l.num)) +
+            btn(l.expectedBy ? "Edit plan" : "Plan handover", "plan", String(l.num)),
+      ) + plan;
+      if (s.planning === l.num && !l.back)
+        html += '<form data-plan data-num="' + l.num + '"><div class="form">' +
+          '<label><span>Expected from</span><select name="expectedBy" required>' +
+          '<option value="">Select…</option>' + opts(people.map((p) => [p, p])) +
+          '</select></label><label><span>Expected at</span><select name="expectedAt" required>' +
+          '<option value="">Select…</option>' +
+          opts(["Sat 9 am", "Sat 10 am", "Sat noon"].map((d) => [d, d])) +
+          '</select></label></div><button type="submit" class="primary">Save linked handover</button> ' +
+          btn("Cancel", "dismiss") + '</form>';
+      if (s.returning === l.num && !l.back)
+        html += '<form data-return data-num="' + l.num + '"><p class="verify-copy">' +
+          'Check the physical label before closing ' + esc(l.req) +
+          '. Enter <strong>' + esc(l.asset) + '</strong> to confirm this is the ' +
+          esc(unit.type) + ' on slip L-' + l.num + '.</p><div class="form">' +
+          '<label><span>Unit ID on item</span><input name="asset" required autocomplete="off" /></label>' +
+          '<label><span>Returned by</span><select name="returnedBy" required>' +
+          '<option value="">Select…</option>' + opts(people.map((p) => [p, p])) +
+          '</select></label></div><button type="submit" class="primary">Confirm return</button> ' +
+          btn("Cancel", "dismiss") + '</form>';
+      html += "</div>";
+    }
     return html;
   }
   function deskbook() {
@@ -319,6 +350,13 @@
       ]);
     for (const n of s.notes)
       entries.push([shifts[n.phase].time, "Counter handover", n.text]);
+    for (const l of s.loans.filter((l) => !l.back && l.expectedBy))
+      entries.push([
+        l.plannedAt || shifts[s.phase].time,
+        "Open handover · " + l.req,
+        l.asset + " (L-" + l.num + ") expected from " + l.expectedBy +
+          " at " + l.expectedAt + ". Confirm the unit label in Loan register before closing.",
+      ]);
     for (const [t, author, body] of entries.slice().reverse())
       html +=
         '<article class="record"><small>' +
@@ -363,6 +401,12 @@
       .join("");
     q("[data-page]").innerHTML = screens[s.tab]();
     if (q("[data-filter]")) q("[data-filter]").value = s.filter;
+    const planForm = q("[data-plan]");
+    if (planForm) {
+      const l = s.loans.find((x) => x.num === Number(planForm.dataset.num));
+      if (l.expectedBy) planForm.elements.expectedBy.value = l.expectedBy;
+      if (l.expectedAt) planForm.elements.expectedAt.value = l.expectedAt;
+    }
     q("[data-status]").textContent = s.notice;
   }
   function commit(msg) {
@@ -390,6 +434,8 @@
       case "tab":
         s.tab = v;
         s.editing = false;
+        s.planning = null;
+        s.returning = null;
         break;
       case "close":
         s.selected = "";
@@ -403,14 +449,22 @@
       case "cancel":
         s.editing = false;
         break;
+      case "dismiss":
+        s.planning = null;
+        s.returning = null;
+        break;
+      case "plan":
+        s.planning = Number(v);
+        s.returning = null;
+        break;
       case "scope":
         s.onlyOpen = v === "0";
         break;
       case "return": {
         const l = s.loans.find((l) => l.num === Number(v));
         if (!l || l.back) return;
-        l.back = true;
-        s.notice = l.asset + " returned to stock. Slip L-" + l.num + " closed.";
+        s.returning = l.num;
+        s.planning = null;
         break;
       }
     }
@@ -426,6 +480,36 @@
     e.preventDefault();
     const f = e.target;
     const form = new FormData(f);
+    if (f.matches("[data-plan]")) {
+      const l = s.loans.find((x) => x.num === Number(f.dataset.num));
+      const expectedBy = String(form.get("expectedBy"));
+      const expectedAt = String(form.get("expectedAt"));
+      if (!l || l.back || !people.includes(expectedBy) ||
+          !["Sat 9 am", "Sat 10 am", "Sat noon"].includes(expectedAt)) return;
+      l.expectedBy = expectedBy;
+      l.expectedAt = expectedAt;
+      l.plannedAt = shifts[s.phase].time;
+      s.planning = null;
+      commit("Linked handover saved for " + l.asset + ".");
+      return;
+    }
+    if (f.matches("[data-return]")) {
+      const l = s.loans.find((x) => x.num === Number(f.dataset.num));
+      if (!l || l.back) return;
+      const asset = String(form.get("asset")).trim().toUpperCase();
+      const returnedBy = String(form.get("returnedBy"));
+      if (asset !== l.asset || !people.includes(returnedBy)) {
+        q("[data-status]").textContent =
+          "Unit ID or returner does not match. Check the physical item and try again.";
+        return;
+      }
+      l.back = true;
+      l.returnedBy = returnedBy;
+      l.returnedAt = shifts[s.phase].time;
+      s.returning = null;
+      commit(l.asset + " returned by " + returnedBy + ". Slip L-" + l.num + " closed.");
+      return;
+    }
     if (f.matches("[data-note]")) {
       const text = String(form.get("note")).trim();
       if (!text) return;
